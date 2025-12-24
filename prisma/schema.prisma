@@ -1,0 +1,259 @@
+// Binance P2P Operations Platform Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Operator Management
+model Operator {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      OperatorRole @default(OPERATOR)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Operator activity
+  handledOrders    P2POrder[] @relation("OrderOperator")
+  sentReplies      ChatReply[]
+  auditLogs        AuditLog[]
+
+  @@map("operators")
+}
+
+// P2P Order Management
+model P2POrder {
+  id              String      @id @default(cuid())
+  binanceOrderId  String      @unique
+  orderType       OrderType   // BUY or SELL
+  amount          Decimal
+  price           Decimal
+  currency        String
+  paymentMethod   String
+  counterpartyId  String
+  counterpartyName String
+  status          OrderStatus @default(PENDING)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Operator assignment
+  operatorId      String?
+  operator        Operator?   @relation("OrderOperator", fields: [operatorId], references: [id])
+  
+  // Related data
+  chatMessages    ChatMessage[]
+  documents       Document[]
+  kycVerification KycVerification?
+  riskAssessment  RiskAssessment?
+  replies         ChatReply[]
+  auditLogs       AuditLog[]
+
+  @@map("p2p_orders")
+}
+
+// Chat Message Detection
+model ChatMessage {
+  id          String   @id @default(cuid())
+  orderId     String
+  content     String
+  timestamp   DateTime
+  isFromUser  Boolean  // true if from counterparty, false if from merchant
+  isProcessed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  order       P2POrder @relation(fields: [orderId], references: [id])
+  replies     ChatReply[]
+
+  @@map("chat_messages")
+}
+
+// Document Management
+model Document {
+  id           String       @id @default(cuid())
+  orderId      String
+  filename     String
+  originalUrl  String
+  localPath    String?
+  fileType     String
+  fileSize     Int
+  uploadedAt   DateTime
+  processedAt  DateTime?
+  ocrText      String?
+  ocrConfidence Float?
+  status       DocumentStatus @default(PENDING)
+  createdAt    DateTime     @default(now())
+
+  order        P2POrder     @relation(fields: [orderId], references: [id])
+  kycData      KycExtraction?
+
+  @@map("documents")
+}
+
+// OCR and KYC Data Extraction
+model KycExtraction {
+  id           String   @id @default(cuid())
+  documentId   String   @unique
+  extractedData Json    // Structured KYC data
+  confidence   Float
+  verifiedFields Json?  // Manual verification overrides
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  document     Document @relation(fields: [documentId], references: [id])
+
+  @@map("kyc_extractions")
+}
+
+// KYC Verification Results
+model KycVerification {
+  id              String          @id @default(cuid())
+  orderId         String          @unique
+  status          KycStatus       @default(PENDING)
+  verificationData Json
+  riskScore       Float?
+  notes           String?
+  verifiedAt      DateTime?
+  verifiedBy      String?         // Operator ID
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  order           P2POrder        @relation(fields: [orderId], references: [id])
+
+  @@map("kyc_verifications")
+}
+
+// Risk Assessment
+model RiskAssessment {
+  id              String     @id @default(cuid())
+  orderId         String     @unique
+  overallScore    Float
+  riskFactors     Json       // Detailed risk breakdown
+  recommendation  RiskLevel
+  autoApproved    Boolean    @default(false)
+  reviewRequired  Boolean    @default(false)
+  notes           String?
+  assessedAt      DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  order           P2POrder   @relation(fields: [orderId], references: [id])
+
+  @@map("risk_assessments")
+}
+
+// Reply Generation and Management
+model ChatReply {
+  id              String      @id @default(cuid())
+  orderId         String
+  messageId       String?     // Original message this replies to
+  suggestedText   String
+  finalText       String?     // After operator review/edit
+  replyType       ReplyType
+  confidence      Float
+  status          ReplyStatus @default(DRAFT)
+  operatorId      String
+  sentAt          DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  order           P2POrder     @relation(fields: [orderId], references: [id])
+  message         ChatMessage? @relation(fields: [messageId], references: [id])
+  operator        Operator     @relation(fields: [operatorId], references: [id])
+
+  @@map("chat_replies")
+}
+
+// Comprehensive Audit Logging
+model AuditLog {
+  id          String     @id @default(cuid())
+  orderId     String?
+  operatorId  String?
+  action      String
+  details     Json
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime   @default(now())
+
+  order       P2POrder?  @relation(fields: [orderId], references: [id])
+  operator    Operator?  @relation(fields: [operatorId], references: [id])
+
+  @@map("audit_logs")
+}
+
+// System Configuration
+model SystemConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedBy   String
+
+  @@map("system_config")
+}
+
+// Enums
+enum OperatorRole {
+  ADMIN
+  SUPERVISOR
+  OPERATOR
+}
+
+enum OrderType {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  IN_PROGRESS
+  PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  VERIFIED
+}
+
+enum KycStatus {
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  REQUIRES_REVIEW
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ReplyType {
+  GREETING
+  PAYMENT_INSTRUCTION
+  DOCUMENT_REQUEST
+  KYC_CLARIFICATION
+  COMPLETION_CONFIRMATION
+  DISPUTE_RESPONSE
+  CUSTOM
+}
+
+enum ReplyStatus {
+  DRAFT
+  REVIEWED
+  SENT
+  FAILED
+}
